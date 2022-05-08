@@ -1,0 +1,608 @@
+---
+title: "Assignment 1"
+author: "Michael McKay"
+date: "29/10/2021"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Load all packages required for this assignment.
+library("tidyverse")
+library("dlookr")
+library("ggplot2")
+library("leaps")
+library("gridExtra")
+library("MASS")
+library("caret")
+library("lattice")
+library("class")
+```
+
+# 1. Introduction
+
+A training and testing dataset has been provided containing information relevant to the insurance industry.  Each dataset contains
+16 features (titled feature_0 though to feature_16).  The information kept within these features has been kept anonymous.  The goal of this assignment is to perform a Exploratory Data analysis on the dataset provided and then fit a model to the data which can be used to predict the target variable 'label'.  The variable 'label' refers to whether or not the specific customer will swap insurance providers.  If the value is '1' it means the customer has or will swapped providers.  The model will then be tested on the testing dataset for accuracy.  Two different models will be fitted and the better of the two will be selected.
+
+```{r}
+# Load the data into RStudio.
+testSet <- read_csv("testSet.csv")
+trainSet <- read_csv("trainSet.csv")
+```
+
+# 2. EDA
+
+# 2.1. Univariate Analysis 
+
+First we will do a glimpse of the training dataset 'trainSet' to get an idea of it's structure.
+
+```{r}
+# View the training dataset.
+glimpse(trainSet)
+```
+From the above we can see that our data set 'trainSet' contains 17 columns and 27,126 rows of data.  All of our columns contain numeric values.  Next we should do a summary of the dataset 'trainSet' to get an idea of it's contents.
+
+```{r}
+# Describe the training dataset.
+describe(trainSet)
+```
+The column labels has a minimum of 0 and a maximum of 1.  This column is a boolean value used to indicate if a customer will be churned or not.  A value of '1' indicates this customer will be churned.  This value should be converted into a factor for both the training set and the test set.  Also we the mean of the labels field is less than 0.5, indicating that the majority of values in this field will be 0.  Therefore any null model built in the future will go with this majority value of 0.  
+
+```{r}
+# Determine tally of churns and non-churns in training set.
+trainSet %>%
+  group_by(labels) %>%
+  tally()
+```
+```{r}
+# Calculate % not cherned.
+percent_not_churn <- 23944 / (23944+3182) * 100
+percent_not_churn
+```
+
+We can see above that 88.26% of the data in our training set will be a non-churn.  We should keep this figure in mind when evalulating our model down the track.
+
+```{r}
+# Convert label into a factor.
+trainSet$labels <- as.factor(trainSet$labels)
+testSet$labels <- as.factor(testSet$labels)
+```
+
+Next we'll sort the features above by standard deviation to see which one's have the most variance.
+
+```{r}
+# Determine standard deviation, sort in order from lowest to highest. 
+sort(apply(trainSet[-17], 2, sd))
+```
+
+The feature with the highest standard deviation is feature_7, and the lowest is feature_10.  From this we know that feature_10 will contain the least amount of information and most likely won't be included in our model.  We know that feature_7 may contain the most information, but as the standard deviation is similar to the mean it would just mean that this feature has a lot of noise.  
+
+```{r}
+# calculate our range and sort from lowest to highest.
+sort(apply(trainSet[-17],2,max) - apply(trainSet[-17],2,min))
+```
+
+From the above we can see that feature_1 has the largest range with a difference between max and min of 29.3.  Features_6, 4, 3, 7 and 14 all seem to have fairly large ranges which have a max - min above 10 each.  Features_10, 11 and 12 all seem to have fairly low ranges, indicating that there is not a very large spread of data here and these variables may not contain a lot of information.
+
+Next we should calculate the normality of our features in the dataset.  We can do this with the following command.
+
+```{r}
+# Calculalte normality.
+trainSet[-17] %>%
+  normality() %>%
+  filter(p_value <= 0.01) %>% 
+  arrange(abs(p_value))
+```
+The above performs a Shapiro-Wilks normality test.  Our null hypothesis is that the relationship is normally distributed, and alternative hypothesis is that it is not normally distributed.  It will filter out all features which are normally distributed with a confidence interval of 99%.  We can see that none of our variables are normally distributed, therefore linear regression is not a suitable way to model this data.  We also know from the fact that the target column is a category that we would be better off using logistic regression.
+
+Next we should generate some histograms.  This will allow us to compare the effect the each feature has on the label attribute.  We can then pick out features which have make a large impact on label and try including them in our model.
+
+```{r}
+# Go through and piece together some density plots to try and guage which variables may be significant or not.
+dens_feature0 <- ggplot(aes(x=feature_0, color = labels),data=trainSet) + 
+    geom_density()
+
+dens_feature1 <- ggplot(aes(x=feature_1, color = labels),data=trainSet) + 
+    geom_density()
+
+dens_feature2 <- ggplot(aes(x=feature_2, color = labels),data=trainSet) + 
+    geom_density()
+
+dens_feature3 <- ggplot(aes(x=feature_3, color = labels),data=trainSet) + 
+    geom_density()
+
+grid.arrange(dens_feature0, dens_feature1, dens_feature2, dens_feature3, ncol=2)
+```
+It appears that features 0, 2 and 3 may include some useful information on predicting if there will be a cancellation or not.  Feature_3 should be expecially useful when predicting.
+
+```{r}
+# Go through and piece together some density plots to try and guage which variables may be significant or not.
+dens_feature4 <- ggplot(aes(x=feature_4, color = labels),data=trainSet) + 
+    geom_density()
+
+dens_feature5 <- ggplot(aes(x=feature_5, color = labels),data=trainSet) + 
+    geom_density()
+
+dens_feature6 <- ggplot(aes(x=feature_6, color = labels),data=trainSet) + 
+    geom_density()
+
+dens_feature7 <- ggplot(aes(x=feature_7, color = labels),data=trainSet) + 
+    geom_density()
+
+grid.arrange(dens_feature4, dens_feature5, dens_feature6, dens_feature7, ncol=2)
+```
+Features 5 and 7 may include some useful information on predicting if there will be a cancellation or not.
+
+```{r}
+# Go through and piece together some density plots to try and guage which variables may be significant or not.
+dens_feature8 <- ggplot(aes(x=feature_8, color = labels),data=trainSet) + 
+    geom_density()
+
+dens_feature9 <- ggplot(aes(x=feature_9, color = labels),data=trainSet) + 
+    geom_density()
+
+dens_feature10 <- ggplot(aes(x=feature_10, color = labels),data=trainSet) + 
+    geom_density()
+
+dens_feature11 <- ggplot(aes(x=feature_11, color = labels),data=trainSet) + 
+    geom_density()
+
+grid.arrange(dens_feature8, dens_feature9, dens_feature10, dens_feature11, ncol=2)
+```
+Features 8, 9 and 11 may contain some useful information on if there will be a cancellation or not.
+
+
+```{r}
+# Go through and piece together some density plots to try and guage which variables may be significant or not.
+dens_feature12 <- ggplot(aes(x=feature_12, color = labels),data=trainSet) + 
+    geom_density()
+
+dens_feature13 <- ggplot(aes(x=feature_13, color = labels),data=trainSet) + 
+    geom_density()
+
+dens_feature14 <- ggplot(aes(x=feature_14, color = labels),data=trainSet) + 
+    geom_density()
+
+dens_feature15 <- ggplot(aes(x=feature_15, color = labels),data=trainSet) + 
+    geom_density()
+
+grid.arrange(dens_feature12, dens_feature13, dens_feature14, dens_feature15, ncol=2)
+```
+Finally, features 12, 13, 14 and 15 may contain some useful information on whether or not there is a cancellation.  
+
+Next we'll use a step forwards and backwards approach to try and predict which of our variables will be the most useful.
+
+Attempt to do stepwise forward selection to pick best variables.
+```{r}
+# Perform step forward method to determine best variables.
+regfit.fwd <- regsubsets(labels ~ ., data=trainSet, nvmax = 16, method = "forward")
+reg.summary.fwd <- summary(regfit.fwd)
+reg.summary.fwd
+```
+```{r}
+# Plot results.
+par(mfrow = c(2, 2))
+plot(reg.summary.fwd$cp, xlab = "Number of variables", ylab = "C_p", type = "l")
+points(which.min(reg.summary.fwd$cp), reg.summary.fwd$cp[which.min(reg.summary.fwd$cp)], col = "red", cex = 2, pch = 20)
+plot(reg.summary.fwd$bic, xlab = "Number of variables", ylab = "BIC", type = "l")
+points(which.min(reg.summary.fwd$bic), reg.summary.fwd$bic[which.min(reg.summary.fwd$bic)], col = "red", cex = 2, pch = 20)
+plot(reg.summary.fwd$adjr2, xlab = "Number of variables", ylab = "Adjusted R^2", type = "l")
+points(which.max(reg.summary.fwd$adjr2), reg.summary.fwd$adjr2[which.max(reg.summary.fwd$adjr2)], col = "red", cex = 2, pch = 20)
+plot(reg.summary.fwd$rss, xlab = "Number of variables", ylab = "RSS", type = "l")
+mtext("Plots of C_p, BIC, adjusted R^2 and RSS for forward stepwise selection", side = 3, line = -2, outer = TRUE)
+```
+From the above plots we can see that the most suitable amount of variables to pic would be either 12 or 13 in order to minimize the BIC.  From this point onwards the BIC seems to increase.  We know models with a lower BIC (Bayesian information criterion) as preferable.  The C_p value seems to pick 15, but seems to be steady from about 12/13 onward.  The value for C_p is used to assess the fir of a regression model that has been estimated using ordinary least squares, which is used for fitting data in a linear regression model.  As we know already that our data can't be fitted to a linear regression we should probably ignore the C_p, Adjusted R Square and RSS tables and focus on the BIC. 
+
+The step forward method tells us the we should aim for 12/13 variables in our model and that the significant features are feature_0 (maybe), feature_1, feature_3, feature_4, feature_5, feature_6, feature_8, feature_9, feature_10, feature_11, feature_12, feature_13, feature_14 and feature_15. 
+
+Next we should try a step backward approach.
+
+```{r}
+# Perform step backwards method to determine best variables.
+regfit.bwd <- regsubsets(labels ~., data=trainSet, nvmax = 16, method= "backward")
+reg.summary.bwd <- summary(regfit.bwd)
+reg.summary.bwd
+```
+
+```{r}
+# Plot results.
+par(mfrow = c(2, 2))
+plot(reg.summary.bwd$cp, xlab = "Number of variables", ylab = "C_p", type = "l")
+points(which.min(reg.summary.bwd$cp), reg.summary.bwd$cp[which.min(reg.summary.bwd$cp)], col = "red", cex = 2, pch = 20)
+plot(reg.summary.bwd$bic, xlab = "Number of variables", ylab = "BIC", type = "l")
+points(which.min(reg.summary.bwd$bic), reg.summary.bwd$bic[which.min(reg.summary.bwd$bic)], col = "red", cex = 2, pch = 20)
+plot(reg.summary.bwd$adjr2, xlab = "Number of variables", ylab = "Adjusted R^2", type = "l")
+points(which.max(reg.summary.bwd$adjr2), reg.summary.bwd$adjr2[which.max(reg.summary.bwd$adjr2)], col = "red", cex = 2, pch = 20)
+plot(reg.summary.bwd$rss, xlab = "Number of variables", ylab = "Adjusted R^2", type = "l")
+mtext("Plots of C_p, BIC, adjusted R^2 and RSS for backward stepwise selection", side = 3, line = -2, outer = TRUE)
+```
+The step backward approach agrees well with the step forward approach.  The step backward method tells us the we should aim for 12/13 variables in our model and that the significant features are feature_0 (maybe), feature_1, feature_3, feature_4, feature_5, feature_6, feature_8, feature_9, feature_10, feature_11, feature_12, feature_13, feature_14 and feature_15.
+
+Lastly for the univariate analysis we should try looking for near zero variance features.
+```{r}
+# Check for near zero variance features.
+nzv <- nearZeroVar(trainSet, saveMetrics = TRUE)
+nzv
+```
+This indicates that feature_5 and feature_10 have near zero variance and may not contain much information.  So far all of our techniques have shown that feature_10 doesn't contain any useful information, but most of our other techniques have shown that feature 5 has some significance.  The histogram plot did look very flat for this, but there were some differences between the plots for when label is 0 and 1, so therefore this feature may still be off value to us.
+
+# 2.2. Bivariate Analysis
+
+We will create a correlation matrix to see if there is any correlation between our variables in the trainingSet.
+
+```{r}
+# Do a correlation matrix to see if there are any dependent variables.
+cor_trainSet <- cor(trainSet[,1:16])
+cor_trainSet
+```
+
+A levelplot will make is easier to see if there is any correlation.
+
+```{r}
+levelplot(cor_trainSet)
+```
+
+We have some models where there is a strong negative correlation.  These are feature 5 and 15, and feature 6 and 15.  There also appears to be a weak correlation between feature 0 and feature 8 as well as a positive correlation between 5 and 6.  I've filtered out anything with a correlation lower than 0.4 (although even then features with a correlation of this level aren't considered strongly correlated).  I'll try putting these features in the model down the line to see if they have a significant positive benefit to the model or not.
+
+I'll plot these variables, and do a linear fit to see how strong the correlation between the two is.
+
+```{r}
+plot(trainSet$feature_5,trainSet$feature_15)
+```
+```{r}
+f_5_15.fit <- lm(feature_5 ~ feature_15,data=trainSet)
+summary(f_5_15.fit)
+```
+
+We definitely do have some correlation here.  Our R squared value for these analytes is 0.7317.
+
+```{r}
+f_6_15.fit <- lm(feature_6 ~ feature_15,data=trainSet)
+summary(f_6_15.fit)
+```
+
+There does appear to be some correlation here are well.  We should try modelling with both interactions taken into account to see if these interactions are significant or not.
+
+```{r}
+plot(trainSet$feature_0,trainSet$feature_8)
+```
+
+```{r}
+f_0_8.fit <- lm(feature_0 ~ feature_8,data=trainSet)
+summary(f_0_8.fit)
+```
+
+The R squared for this plot is only around 0.1638.  Maybe we don't need to take this interaction into account, but may be worth trying just to be safe.
+
+```{r}
+plot(trainSet$feature_5,trainSet$feature_6)
+```
+```{r}
+f_5_6.fit <- lm(feature_5 ~ feature_6,data=trainSet)
+summary(f_5_6.fit)
+```
+R squared value for this is 0.2996.  It's a bit on the low side, but may be worth trialling.
+
+# 2.4. Summary
+
+From the above analysis we know that the features 0, 2, 3, 5, 7, 8, 9, 11, 12, 13, 14 and 15 may contain data which is useful.  We should try building a model which incorporates all of these features, and then remove the ones which aren't required.  We also know that there may be interaction effects between features 0:8, 5:6, 5:15 and 5:16.  We should take these into account when we build our model.
+
+# 3. Model Development
+
+# 3.1. Linear Model
+
+The first mode we should try to fit is a linear model, as this is the most basic model to fit to the data.  As our target variable is a boolean value (either 0 or 1) then this may not be the most suitable model for us to try.  First we will try fitting using all variables in the 
+```{r}
+#reload trainSet to undo factoring for linear fit.
+trainSet <- read_csv("trainSet.csv")
+
+# Let's attempt a linear fit for this data.
+linear_fit <- lm(labels ~ ., data = trainSet)
+
+summary(linear_fit)
+```
+
+The above summary shows that all of the features in our dataset have some significance except for feature 7 and feature 10.  We should drop these from our model straight away and attempt to refit.
+
+```{r}
+# Try linear fit with only significant variables.
+
+linear_fit_int <- lm(labels ~ feature_0 + feature_1 + feature_3 + feature_4 + feature_5 + feature_6 + feature_8 + feature_9 + feature_11 + feature_12 + feature_13 + feature_14 + feature_15, data = trainSet)
+
+summary(linear_fit_int)
+```
+
+Our R-Squared value is not very good.  We should try including our interaction effects to the model to see if they improve our fit at all.
+
+```{r}
+# Try linear fit with only significant variables.
+
+linear_fit <- lm(labels ~ feature_0 + feature_1 + feature_3 + feature_4 + feature_5 + feature_6 + feature_8 + feature_9 + feature_11 + feature_12 + feature_13 + feature_14 + feature_15 + feature_0:feature_8 + feature_5:feature_6 + feature_5:feature_15 + feature_6:feature_15, data = trainSet)
+
+summary(linear_fit)
+```
+
+We have some improvement, but not much.  The above summary shows us that the feature 15 is no longer contributing to our fit, but we should leave this feature in the model as we are including it in an interaction.  Next we should have a look at the residual/fitted plot for this model.  Interestly it shows that the feature_5:feature_6 interaction does not contribute, so we should not include it.
+
+```{r}
+# Plot residual vs fitted values.
+plot(linear_fit, which=1)
+```
+The values in the plot above aren't normally distributed, meaning the dataset can't be fitted with a linear model.  We should move on and try fitting with a logistic model, which is better suited for predicting categories.  This is consistently with what was determined during the EDA stage when we determined normality of the features in the training set.
+
+# 3.2 Logistic Model 
+
+Next we will attempt to fit a logistic model to the data.  Firstly, I'll convert the column 'labels' to a factor, as the column only contains two possible values.  Either 0 or 1.
+
+```{r}
+# Convert label to factor.
+trainSet$labels <- as.factor(trainSet$labels)
+
+# Fit a logistic model to our data.
+logistic_fit <- glm(labels ~ ., data = trainSet, family = binomial)
+
+summary(logistic_fit)
+```
+
+The above summary shows us that features 7 and 10 aren't statistically significant, just like the previous linear model.  We should remodeling without this.  Also, the residual deviance is a fair bit lower then the null deviance indicating that our current model is better than the null model.  This shows us that a logistic model has potential to fit the provided training data.
+
+```{r}
+# Refit but remove the variables which aren't statistically significant.
+logistic_fit <- glm(labels ~ feature_0 + feature_1 + feature_3 + feature_4 + feature_5 + feature_6 + feature_8 + feature_9 + feature_11 + feature_12 + feature_13 + feature_14 + feature_15, data = trainSet, family = binomial)
+
+summary(logistic_fit)
+```
+The residual deviance is very similar for both the new model and the old model.  But when the model performance is similar we should always choose the simpler model, so we will leave these features out.  Next we should try including the interaction effects to see if they improve our model at all.
+
+```{r}
+# Include interaction effects to see if it makes a difference or not.
+logistic_fit_int <- glm(labels ~ feature_0 + feature_1 + feature_3 + feature_4 + feature_5 + feature_6 + feature_8 + feature_9 + feature_11 + feature_12 + feature_13 + feature_14 + feature_15 + feature_0:feature_8 + feature_5:feature_6 + feature_5:feature_15 + feature_6:feature_15, data = trainSet, family = binomial)
+
+summary(logistic_fit_int)
+```
+
+Our residual deviance has dropped a fair bit, as well as our AIC value.  This means that our new model with the interaction effects is a better fit than the one without.  Several of our individual variables are no longer significant.  But I believe we should leave these individual variables in our model. 
+
+Now let's compare our two models with interactions included and not:
+
+```{r}
+anova(logistic_fit,logistic_fit_int)
+```
+
+We do see a fairly significant drop in deviance from the model with no interactions to the model with.  We should keep these interaction effects in.  Next we should do a Chi Square test:
+
+```{r}
+anova(logistic_fit, test = "Chisq")
+```
+
+Above we can see that our of our variables in the model are significant according to the Pr(>Chi) value.  As all of these values are below 0.01 we can say with 99% confidence they should be included.
+
+Next we will compare our model to the null model to see if our model can accurate predict the target then the null.
+
+```{r}
+# Try to compare our model to null model.
+with(logistic_fit, pchisq(null.deviance - deviance, df.null - df.residual, lower.tail = FALSE))
+```
+
+The returned p-value is 0.  We can reject the null hypothesis that null model and our model are the same with over 99.9% confidence.  This data seems to strongly suggest that this model when fitted logistically fits our data well.
+
+# 3.3. LDA model
+
+Next we'll try fitting a LDA model to our data.  We can use the modelled determined above when doing our linear and logistic fits because those fits combined with the step forward / step backward data strongly suggested that these were the best variables / interactions to choose.
+
+```{r}
+# Fit the LDA model.
+lda.fit <- lda(labels ~ feature_0 + feature_1 + feature_3 + feature_4 + feature_5 + feature_6 + feature_8 + feature_9 + feature_11 + feature_12 + feature_13 + feature_14 + feature_15 + feature_0:feature_8 + feature_5:feature_6 + feature_5:feature_15 + feature_6:feature_15, data = trainSet)
+
+lda.fit
+```
+
+Next we can try fitting with a QDA model to see if an LDA or a QDA will be a better fit.
+
+# 3.4. QDA model
+
+```{r}
+# Fir the QDA model.
+qda.fit <- qda(labels ~ feature_0 + feature_1 + feature_3 + feature_4 + feature_5 + feature_6 + feature_8 + feature_9 + feature_11 + feature_12 + feature_13 + feature_14 + feature_15 + feature_0:feature_8 + feature_5:feature_6 + feature_5:feature_15 + feature_6:feature_15, data = trainSet)
+
+qda.fit
+```
+
+# 3.5 KNN model
+
+Lastly we will attempt to put together a KNN model.  We'll try putting it together 
+
+```{r}
+# Create a variable label.test for evaluating of models.
+label.test <- testSet$labels
+
+# Create training and test lists containing only the features we're interested in.
+knn.train <- trainSet[,c(1, 2, 4, 5, 6, 7, 9, 10, 12, 13, 14, 15, 16)]
+knn.test <- testSet[,c(1, 2, 4, 5, 6, 7, 9, 10, 12, 13, 14, 15, 16)]
+
+# Create a list of labels for training for the KNN algorithm.
+label.train <- trainSet$labels
+
+set.seed(1)
+knn.pred <- knn(trainSet, testSet, label.train, k = 1)
+
+#Show confusion matrix.
+caret::confusionMatrix(knn.pred, label.test, positive="1")
+```
+Try again with a k value of 2 and see how it effects our accuracy:
+
+```{r}
+#Fit model with k = 2.
+knn.pred <- knn(trainSet, testSet, label.train, k = 2)
+
+#Show confusion matrix.
+caret::confusionMatrix(knn.pred, label.test, positive="1")
+```
+```{r}
+#Fit model with k = 3.
+knn.pred <- knn(trainSet, testSet, label.train, k = 3)
+
+#Show confusion matrix.
+caret::confusionMatrix(knn.pred, label.test, positive="1")
+```
+```{r}
+#Fit model with k = 4.
+knn.pred <- knn(trainSet, testSet, label.train, k = 4)
+
+#Show confusion matrix.
+caret::confusionMatrix(knn.pred, label.test, positive="1")
+```
+
+```{r}
+#Fit model with k = 5.
+knn.pred <- knn(trainSet, testSet, label.train, k = 5)
+
+#Show confusion matrix.
+caret::confusionMatrix(knn.pred, label.test, positive="1")
+```
+I've decided to go with a k value of 1 for this model, as the number of true positives is dropping as we increase the k value.  A decrease in postive value and accuracy makes the model less useful for the clients needs.
+
+```{r}
+#Fit model with k = 1.
+knn.pred <- knn(trainSet, testSet, label.train, k = 1)
+
+#Show confusion matrix.
+caret::confusionMatrix(knn.pred, label.test, positive="1")
+```
+
+# 4. Model Scoring on Test Data
+
+# 4.1. Logistic Model:
+
+```{r}
+# Prepare prediction data.  Set 0.5 as been the threshold for logistic model.
+probs <- predict(logistic_fit_int, testSet, type="response")
+pred.log <- rep("0", length(probs))
+pred.log[probs > 0.5] <- "1" 
+table(pred.log, label.test)
+
+caret::confusionMatrix(table(pred.log, label.test), positive = "1")
+```
+
+Our logistic model is able to predict with an accuracy of 89.72% with a confidence interval of between 88.98% and 90.44%.  Let's test our LDA model next. 
+
+# 4.2. LDA Model
+
+```{r}
+# Generate a confusion Matrix for LDA model above.
+pred.lda <- predict(lda.fit, testSet)
+caret::confusionMatrix(table(pred.lda$class, label.test), positive="1")
+```
+
+Our LDA model is able to predict with an accuracy of 89.55% with a confidence interval of between 88.79% and 90.26%.
+
+
+# 4.3. QDA Model
+
+```{r}
+# Generate a confusion Matrix for QDA model above.
+pred.qda <- predict(qda.fit, testSet)
+caret::confusionMatrix(table(pred.qda$class, label.test), positive="1")
+```
+
+The QDA model has an accuracy of 85.84% with a confidence interval of between 84.99% and 86.67%. 
+
+# 4.4 KNN model
+
+```{r}
+# Generate a confusion Matrix for KNN model above.
+caret::confusionMatrix(knn.pred, label.test, positive="1")
+```
+The KNN model performs the best out of all our models with an accuracy of 94.5% with a confidence interval between 93.92% and 95.02%.
+
+# 5. Model Interpretation and Inference
+
+From the summaries above it seems like the Logistic, LDA and KNN model will be suitable for predicting data.  The accuracy rate for all three is higher then the 'no information rate'.  The 'no information rate' is our best guess given no information beyond the overall distribution of the classes we're trying to predict.  We know that the majority of customers don't churn according to our training data (88.26%) so the best guess with no other information would be to pick the majority class of not churning.  
+
+The accuracy of our Logistic model is 89.72%, the LDA model is 89.55%, the QDA model is 86.42% and the KNN model is 94.45%.  The no information rate for our test data is 88.43%.  As the QDA accuracy is lower then the no information rate we should reject this as the QDA model is no better then guessing based on what the majority of cases is.
+
+The next value to look at in our confusion matrices is the p-Value.  The null hypothesis for this is our model matches the null model.  As the p-Value for the Logistic model, LDA model and the KNN is less than 0.01 we can say with 99% certainty that our null hypothesis can be rejected and that both our models outdo the null model.
+
+The next values to look at are the sensitivity and the specificity.  The sensitivity is the percentage of observed customers that churned which were correctly identified and the specificitiy are the number of customers that did not churn which were correctly identified.
+
+The sensitivity results were 27.64% for the logistic model, 35.54% for the LDA and 54.78% for the KNN.  This data implies that the KNN models is the best suited for picking up on customers which had churned.
+
+The specificity results were 97.85% for the logistic, 96.6% for the LDA and 99.3% for the KNN.  This data implies that the KNN model is also best suited for picking up on customers which had not churned.
+
+Lastly to compare which model is better, we should calculate out the precision and recall for the logistic model, LDA model and the KNN.
+
+```{r}
+# Determine recall and precision for logistic model from true positives, false positives and false negatives.
+log_tp <- 217
+log_fp <- 129
+log_fn <- 568
+
+log_recall <- log_tp / (log_tp + log_fn)
+log_precision <- log_tp / (log_tp + log_fp)
+```
+
+```{r}
+# Determine recall and precision for LDA model from true positives, false positives and false negatives.
+lda_tp <- 279
+lda_fp <- 203
+lda_fn <- 506
+
+lda_recall <- lda_tp / (lda_tp + lda_fn)
+lda_precision <- lda_tp / (lda_tp + lda_fp)
+```
+
+```{r}
+# Determine recall and precision for KNN model from true positives, false positives and false negatives.
+knn_tp <- 430
+knn_fp <- 42
+knn_fn <- 355
+
+knn_recall <- knn_tp / (knn_tp + knn_fn)
+knn_precision <- knn_tp / (knn_tp + knn_fp)
+```
+
+The KNN has by far a higher precision then the logistic or LDA models with a precision of 91%.  The precision for Logistic was 62.7% and 57.8% for LDA.  A higher precision implies that it has predicted to lowest amount of false positives when taking only positive values into accound.
+
+The KNN has the highest value for recall of 54.7%, whereas logistic has a recall of 27.6% and LDA has a recall of 35.5%.  This indicates that the KNN model also predicts the lowest amount of false negatives.  
+
+Lastly we can calculate the F-score for all three.
+
+```{r}
+# Calculate F-Scores for all modesl.
+lda_fscore <- (2*lda_recall*lda_precision)/(lda_recall+lda_precision)
+
+log_fscore <- (2*log_recall*log_precision)/(log_recall+log_precision)
+
+knn_fscore <- ((2*knn_recall*knn_precision)/(knn_recall+knn_precision))
+```
+
+Our KNN model once again has the highest score, with a f-score of 68%.  This value is the harmonic mean of precision and recall.  With all of this data put together, we can say overwhelmingly that the KNN model is the best for predicting data in this case.
+
+# 6. Variable Importance
+
+Our analysis above has shown that the most important variables in this analysis are features_0, features_1, features_3, features_4, features_5, features_6, features_8, features_9, features_11, features_12, features_13, features_14 and features_15.  It seems like almost all variables make some kind of contribution, which may be small individually but adds up when all included.
+
+The following features have a negative contribution.  Feature_4, feature_5, feature_6, feature_11, feature_12, feature_13, feature_15.  The feature with the greatest impact is feature 11, and the only with the lowest is feature 15.
+
+The following features have a positive contribution.  Feature_0, feature_1, feature_3, feature_8, feature_9 and feature_14.  The one feature with the greatest contribution is feature_3 and the one with the least is feature_14.
+
+Going by the step forward algorithm, the variables should be ranked in greatest importance to lowest importance as:
+feature_3, feature_13, feature_11, feature_6, feature_12, feature_5, feature_15, feature_9, feature_14, feature_4, feature_8, feature_1, feature_0, feature_2, feature_10, feature_7.
+
+ We could also use the Z factor from our logistic model with all variables as a means to rank the importance of our variables.  The Z factor is the coefficient divided by the standard error.  The higher the standard error, the lower our Z value will be and the lower our coefficient that lower our Z factor will be.  Therefore measures with lower coefficients and higher error will rank lower.  The order would be (when we do an absolute value for the coefficient as we're not taking into account if contribution is negative or positive) would be feature_3, feature_11, feature_13, feature_6, feature_12, feature_5, feature_15, feature_9, feature_14, feature_4, feature_8, feature_1, feature_0, feature_2, feature_10 and feature_7.  
+ 
+Given the two selections, I would say the order of importance given by the step_forward algorithm may be more accurate then the logistic Z factors.  This is because the step_forward will pick the variables which give the lowest BIC as it's stepping through.  On the above BIC vs. variable plot we can see the curve is must steeper when the number of variables is low, then when it's between 12 and 15.  This is because the variables it picks at the start are having a much greater effect on the BIC, and are therefore more important for modelling.  However the two listings are fairly similar.  
+
+
+# 7. Marketing Suggestions
+
+One thing that I noted when doing the data analysis was that the training test set was very unbalanced towards uncherned clients.  Maybe there would be a way to adjust the sampling of the test so that it can include more cherned clients to make the distinction between cherned and uncherned clients more distinct.  As long as it wasn't done in a way that made the data biased or unrepresentative.  The model determined in this project could potentially be used to find clients who were about to be cherned, so it should be of us in finding clients who should be reached out to.  The business could also focus on the features found above (like feature 3 which seems to be the most influencial) and set a threshold on this feature so that they would be alerted if the threshold was exceeded. 
+
+# 8. Conclusion
+
+In conclusion it was determined that the KNN model was the best suited for predicting whether or not a client would chern based on the training and test dataset provided.  A complete EDA was done on the data which indicated which features in the test set were of most importance, and a model of 94.5% accuracy was able to be produced from this data.
